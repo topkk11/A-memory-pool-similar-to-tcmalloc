@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Project name
-project(MemoryPoolProject)
+project(111)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 11)

@@ -1,48 +1,33 @@
 #pragma once
 
+#include"MemoryPool.h"
 #include<iostream>
 #include<vector>
 #include<cassert>
 #include<thread>
 #include<mutex>
-#ifdef _WIN32
-    #include<Windows.h>
-#else
-#endif
-
+#include<unordered_map>
 
 typedef size_t PageID;
 
 static const size_t FREE_LIST_NUM = 208;    //最大自由链表个数
 static const size_t MAX_BYTES = 256 * 1024; //ThreadCache单次申请最大字节数
 static const size_t MAX_PAGE_NUM = 129; //PageCache管理的最大页数
-static const size_t PAGE_SHIFT = 13; //页的大小 2的13次方 8KB
 
-
-inline static void*& Nextobj(void* obj) {
-    return *reinterpret_cast<void**>(obj);
-}
-inline static void* SystemAlloc(size_t kpage) {
-#ifdef _WIN32
-    void* ptr = VirtualAlloc(0, kpage << PAGE_SHIFT, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
-
-#endif
-    if (ptr == nullptr) {
-        throw std::bad_alloc();
-    }
-    return ptr;
-}
 
 struct Span {
     PageID _pageId = 0; //页号
     size_t _pageNum = 0;//页数
+
+    size_t _objSize = 0; //span管理页被划分的块大小
 
     Span* _next = nullptr;
     Span* _prev = nullptr;
 
     void* _freeList = nullptr;
     size_t _useCount = 0;
+
+    bool _isUse = false;//判断Span的位置  false在PageCache中 true在CentralCache中  方便PageCache合并相邻的Span
 };
 
 class SpanList {
@@ -110,29 +95,46 @@ public:
         //头插法
         Nextobj(obj) = _freeList;
         _freeList = obj;
-    }
-
-    void PushRange(void* start, void* end) {
-        assert(start);
-        assert(end);
-        Nextobj(end) = nullptr;
-        _freeList = start;
+        _size++;
     }
     void* Pop() {
         assert(_freeList);
         //从头部取出
         void* obj = _freeList;
         _freeList = Nextobj(obj);
+        _size--;
         return obj;
+    }
+
+    void PushRange(void* start, void* end,size_t size) {
+        assert(start);
+        assert(end);
+        Nextobj(end) = nullptr;
+        _freeList = start;
+
+        _size += size;
+    }
+    void PopRange(void*& start, void*& end,size_t n) {
+        assert(n <= _size);
+        start = end = _freeList;
+        for (size_t i = 0;i < n - 1;i++) {
+            end = Nextobj(end);
+        }
+        _freeList = Nextobj(end);
+        Nextobj(end) = nullptr;
+        _size -= n;
     }
 
     size_t& MaxSize(){
         return _maxSize;
     }
-    
+    size_t Size(){
+        return _size;
+    }
 private:
     void* _freeList = nullptr;
-    size_t _maxSize = 1;
+    size_t _maxSize = 1;  //当前自由链表申请未达到上限时，能够申请的内存块的最大数量
+    size_t  _size = 0;     //当前自由链表有多少块内存块
 };
 
 class SizeClass {
@@ -168,23 +170,23 @@ public:
         static int list_array[4] = { 16,56,56,56 };
         if (size <= 128) {
             //[1,128] 8B 
-            return _Index(size, 8);
+            return _Index(size, 3);
         }
         else if (size <= 1024) {
             //[128+1,1024] 16B 
-            return _Index(size, 16) + list_array[0];
+            return _Index(size - 128, 4) + list_array[0];
         }
         else if (size <= 1024*8) {
             //[1024+1,8*1024] 128B
-            return _Index(size, 128) + list_array[0] + list_array[1];
+            return _Index(size - 1024, 7) + list_array[0] + list_array[1];
         }
         else if (size <= 1024*64) {
             //[8*1024+1,8*8*1024] 1024B   
-            return _Index(size, 1024) + list_array[0] + list_array[1] + list_array[2];
+            return _Index(size - 8 * 1024, 10) + list_array[0] + list_array[1] + list_array[2];
         }
         else if (size <= 1024*256) {
             //[8*8*1024+1,8*8*8*1024] 8*1024B
-            return _Index(size, 8 * 1024) + list_array[0] + list_array[1] + list_array[2] + list_array[3];
+            return _Index(size - 64 * 1024, PAGE_SHIFT) + list_array[0] + list_array[1] + list_array[2] + list_array[3];
         }
         else {
             assert(false);
@@ -215,8 +217,8 @@ public:
             return _RoundUp(size, 8*1024);
         }
         else {
-            assert(false);
-            return -1;
+            //单次申请空间大于256KB，直接按页对齐
+            return _RoundUp(size, 1 << PAGE_SHIFT);
         }
     }
 private:
@@ -228,7 +230,7 @@ private:
     static size_t _RoundUp(size_t size, size_t alignment) {
         //size:传入的字节大小
         //alignment：需要对齐的字节大小
-        return (size + alignment + 1) & ~(alignment - 1);
+        return (size + alignment - 1) & ~(alignment - 1);
     
     }
 };

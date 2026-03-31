@@ -3,12 +3,16 @@
 
 class ThreadCache {
 public:
+    //线程申请size大小空间
     void* Allocate(size_t size);
+    //回收线程size大小空间
     void Deallocate(void* obj, size_t size);
-
+    //当ThreadCache中Freelist为空时向CentralCache申请内存
     void* FetchFromCentralCache(size_t index, size_t alignSize);
+    //当ThreadCache中空闲块太多时向CentralCache归还内存
+    void ReturnToCentralCache(FreeList& list, size_t size);
 private:
-    FreeList _freeLists[FREE_LIST_NUM];
+    FreeList _freeLists[FREE_LIST_NUM] ;
     //size范围                    对齐字节                哈希桶下标范围
     //[1,128]                     8B                     [0,16)   
     //[128+1,1024]                16B                    [16,72) 

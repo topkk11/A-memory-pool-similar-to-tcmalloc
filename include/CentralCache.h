@@ -6,12 +6,12 @@ public:
     static CentralCache* GetInstance(){
         return &_CCinstance;
     }
+    //返回CentralCache实际提供给ThreadCache的内存大小
     size_t FetchRangeObj(void*& start, void*& end, size_t blockNum, size_t sizePerBlock);
-        //返回CC实际提供给tc的内存大小
-        //start为这块内存的开始，end为这块内存的结束
-        //blockNum是tc申请的内存块数
-        //sizePerBlock是tc需要的单块内存大小
+    //获取一个Span
     Span* GetOneSpan(SpanList& list, size_t size);
+    //回收ThreadCache返回的内存
+    void ReceiveFromThreadCache(void* start, size_t size);
 
 private:
     CentralCache() {}
